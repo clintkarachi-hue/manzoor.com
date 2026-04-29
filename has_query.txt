@@ -1,0 +1,13 @@
+src/pages/Sales.tsx
+src/pages/Purchases.tsx
+src/pages/Inventory.tsx
+src/pages/Users.tsx
+src/pages/Dashboard.tsx
+src/pages/Customers.tsx
+src/pages/Employees.tsx
+src/pages/Reports.tsx
+src/pages/Vendors.tsx
+src/pages/Ledger.tsx
+src/pages/Payroll.tsx
+src/components/Layout.tsx
+src/context/BranchContext.tsx

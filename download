@@ -1,0 +1,387 @@
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useBranch } from '../context/BranchContext';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { ReceiptCent, Plus, Printer, Trash2 } from 'lucide-react';
+import { printInvoice } from '../lib/print';
+import { useSettings } from '../context/SettingsContext';
+
+interface Employee {
+  id: string;
+  name: string;
+  role: string;
+  dailyWage: number;
+  monthlySalary?: number;
+  advanceBalance?: number;
+}
+
+interface Payslip {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  branchId: string;
+  month: string;
+  days?: number;
+  baseSalary: number;
+  advances: number;
+  netPayable: number;
+  date: number;
+}
+
+export function Payroll() {
+  const { user } = useAuth();
+  const { activeBranchId, branches } = useBranch();
+  const { enableDeletion } = useSettings();
+  
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [payslips, setPayslips] = useState<Payslip[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [targetBranchId, setTargetBranchId] = useState('');
+  
+  // Pending list for batch creation
+  const [pendingSlips, setPendingSlips] = useState<any[]>([]);
+
+  // Form State
+  const [selectedEmpId, setSelectedEmpId] = useState('');
+  const [month, setMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+  const [days, setDays] = useState('');
+  const [baseSalary, setBaseSalary] = useState('');
+  const [advances, setAdvances] = useState('');
+  
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (user?.role !== 'super_admin' && !activeBranchId) return;
+
+    // Fetch Employees
+    let empQ: any = query(collection(db, 'employees'));
+    if (activeBranchId) {
+      empQ = query(collection(db, 'employees'), where('branchId', '==', activeBranchId));
+    }
+    const unsubEmp = onSnapshot(empQ, (snap) => {
+      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee)));
+    });
+
+    // Fetch Payslips
+    let slipQ: any = query(collection(db, 'payroll'), orderBy('date', 'desc'));
+    if (activeBranchId) {
+      slipQ = query(collection(db, 'payroll'), where('branchId', '==', activeBranchId));
+    }
+    const unsubSlip = onSnapshot(slipQ, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Payslip)).sort((a,b) => b.date - a.date);
+      setPayslips(data);
+    });
+
+    return () => {
+      unsubEmp();
+      unsubSlip();
+    };
+  }, [user, activeBranchId]);
+
+  const handleCalculateBase = (empId: string) => {
+    setSelectedEmpId(empId);
+    const emp = employees.find(e => e.id === empId);
+    if (emp) {
+      if (emp.monthlySalary) {
+        setBaseSalary(emp.monthlySalary.toString());
+        setDays('30');
+      } else if (emp.dailyWage) {
+        setBaseSalary('');
+        setDays('');
+      } else {
+        setBaseSalary('');
+        setDays('');
+      }
+    } else {
+      setBaseSalary('');
+      setDays('');
+    }
+  };
+
+  const handleDaysChange = (val: string) => {
+    setDays(val);
+    const emp = employees.find(e => e.id === selectedEmpId);
+    if (emp && emp.dailyWage) {
+      const d = Number(val) || 0;
+      setBaseSalary((emp.dailyWage * d).toString());
+    }
+  };
+
+  const handleAddToList = (e: React.FormEvent) => {
+    e.preventDefault();
+    const branchToUse = activeBranchId || targetBranchId;
+    if (!branchToUse) {
+      alert("Please select a branch first");
+      return;
+    }
+
+    const emp = employees.find(x => x.id === selectedEmpId);
+    if (!emp) return;
+
+    if (pendingSlips.some(s => s.employeeId === emp.id)) {
+      alert("Employee already added to the list for this batch.");
+      return;
+    }
+
+    const bSal = Number(baseSalary) || 0;
+    const adv = Number(advances) || 0;
+    const d = Number(days) || 0;
+    const net = bSal - adv;
+
+    setPendingSlips([...pendingSlips, {
+      id: Math.random().toString(), // temp id
+      employeeId: emp.id,
+      employeeName: emp.name,
+      branchId: branchToUse,
+      month,
+      days: d,
+      baseSalary: bSal,
+      advances: adv,
+      netPayable: net,
+    }]);
+
+    setSelectedEmpId('');
+    setBaseSalary('');
+    setAdvances('');
+    setDays('');
+  };
+
+  const handleSaveAllSlips = async () => {
+    if (pendingSlips.length === 0) return;
+    setIsSubmitting(true);
+    try {
+      for (const slip of pendingSlips) {
+        const emp = employees.find(x => x.id === slip.employeeId);
+        if (!emp) continue;
+
+        const newSlip = {
+          employeeId: slip.employeeId,
+          employeeName: slip.employeeName,
+          branchId: slip.branchId,
+          month: slip.month,
+          days: slip.days,
+          baseSalary: slip.baseSalary,
+          advances: slip.advances,
+          netPayable: slip.netPayable,
+          date: new Date().getTime(),
+          createdAt: serverTimestamp(),
+          tenantId: user?.tenantId || user?.uid
+        };
+
+        await addDoc(collection(db, 'payroll'), newSlip);
+
+        if (slip.advances > 0) {
+          await updateDoc(doc(db, 'employees', emp.id), {
+            advanceBalance: (emp.advanceBalance || 0) - slip.advances,
+            updatedAt: serverTimestamp()
+          });
+        }
+        
+        await addDoc(collection(db, 'ledger'), {
+          branchId: slip.branchId,
+          date: new Date().getTime(),
+          description: `Salary Paid: ${slip.employeeName} (${slip.month})`,
+          category: 'Salary',
+          type: 'OUT',
+          amount: slip.netPayable,
+          reference: `PAYROLL-${slip.month}`,
+          createdAt: serverTimestamp(),
+          tenantId: user?.tenantId || user?.uid
+        });
+      }
+
+      setPendingSlips([]);
+      setShowAdd(false);
+    } catch (err: any) {
+      alert("Error saving payroll batch: " + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!enableDeletion || user?.role !== 'super_admin') return;
+    if (confirm("Are you sure you want to delete this payslip record? WARNING: This will NOT delete the auto-generated ledger entry.")) {
+      try {
+        await deleteDoc(doc(db, 'payroll', id));
+      } catch (err: any) {
+        alert("Failed to delete payslip: " + err.message);
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center card p-4 print:hidden">
+        <h2 className="text-xl font-semibold text-slate-800 flex items-center">
+          <ReceiptCent className="w-6 h-6 mr-3 text-emerald-600" />
+          Payroll & Salaries
+        </h2>
+        
+        <div className="flex items-center space-x-4">
+          <button onClick={() => printInvoice('payroll-print-content', 'Payroll Report', 'a4')} className="flex items-center px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-md hover:bg-slate-50 transition shadow-sm">
+            <Printer className="w-5 h-5 mr-2" /> Print
+          </button>
+          <button onClick={() => setShowAdd(!showAdd)} className="flex items-center px-4 py-2 bg-[#1e293b] text-sky-400 rounded-md hover:bg-slate-800 transition shadow-sm">
+            <Plus className="w-5 h-5 mr-2" /> Generate Payslip
+          </button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div className="card p-6 bg-slate-50 print:hidden space-y-4">
+          <form onSubmit={handleAddToList} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+            {!activeBranchId && (
+              <div className="lg:col-span-6 mb-2">
+                <label className="block text-sm font-medium text-slate-700">Branch</label>
+                <select required value={targetBranchId} onChange={e => setTargetBranchId(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
+                  <option value="" disabled>Select Branch</option>
+                  <option value="main">Main Branch</option>
+                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="lg:col-span-1">
+              <label className="block text-sm font-medium text-slate-700">Month</label>
+              <input type="month" required value={month} onChange={e => setMonth(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm" />
+            </div>
+            <div className="lg:col-span-1">
+              <label className="block text-sm font-medium text-slate-700">Employee</label>
+              <select required value={selectedEmpId} onChange={e => handleCalculateBase(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
+                <option value="" disabled>Select Employee</option>
+                {employees.map(e => (
+                  <option key={e.id} value={e.id}>{e.name} ({e.role})</option>
+                ))}
+              </select>
+            </div>
+            <div className="lg:col-span-1">
+              <label className="block text-sm font-medium text-slate-700">Days</label>
+              <input type="number" required value={days} onChange={e => handleDaysChange(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm" />
+            </div>
+            <div className="lg:col-span-1">
+              <label className="block text-sm font-medium text-slate-700">Total Base Salary</label>
+              <input type="number" required value={baseSalary} onChange={e => setBaseSalary(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm" />
+            </div>
+            <div className="lg:col-span-1">
+              <label className="block text-sm font-medium text-slate-700">
+                Advances / Deductions
+                {selectedEmpId && (
+                  <span className="text-xs text-rose-600 ml-2 font-mono">
+                    (Owed: Rs {employees.find(e => e.id === selectedEmpId)?.advanceBalance?.toLocaleString() || '0'})
+                  </span>
+                )}
+              </label>
+              <input type="number" value={advances} onChange={e => setAdvances(e.target.value)} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm" />
+            </div>
+            <div className="lg:col-span-1 flex items-end">
+              <button type="submit" disabled={isSubmitting} className="w-full px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-slate-700 bg-slate-200 hover:bg-slate-300 disabled:opacity-50">
+                Add to List
+              </button>
+            </div>
+          </form>
+
+          {pendingSlips.length > 0 && (
+            <div className="mt-6 border-t border-slate-200 pt-4">
+              <h3 className="text-md font-semibold text-slate-800 mb-3">Pending Payslips for {month}</h3>
+              <div className="overflow-x-auto bg-white rounded border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Employee</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Days</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Basic Salary</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase text-rose-600">Deduction</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase text-emerald-600">Net Payable</th>
+                      <th className="px-4 py-2 text-center text-xs font-medium text-slate-500 uppercase">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {pendingSlips.map(slip => (
+                      <tr key={slip.id} className="text-sm">
+                        <td className="px-4 py-2 font-medium">{slip.employeeName}</td>
+                        <td className="px-4 py-2 font-mono">{slip.days}</td>
+                        <td className="px-4 py-2 font-mono text-right">{slip.baseSalary.toLocaleString()}</td>
+                        <td className="px-4 py-2 font-mono text-right text-rose-600">{slip.advances.toLocaleString()}</td>
+                        <td className="px-4 py-2 font-mono text-right text-emerald-600 font-bold">{slip.netPayable.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-center">
+                          <button onClick={() => setPendingSlips(pendingSlips.filter(s => s.id !== slip.id))} className="text-slate-400 hover:text-rose-600">
+                            <Trash2 className="w-4 h-4 mx-auto" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex justify-end space-x-3">
+                <button type="button" onClick={() => { setPendingSlips([]); setShowAdd(false); }} className="px-6 py-2 border border-slate-300 rounded-md shadow-sm text-sm font-medium text-slate-700 bg-white hover:bg-slate-50">
+                  Cancel
+                </button>
+                <button onClick={handleSaveAllSlips} disabled={isSubmitting} className="px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
+                  {isSubmitting ? 'Saving...' : `Save ${pendingSlips.length} Payslips & Update Ledger`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div id="payroll-print-content" className="space-y-6 print:space-y-4 print:bg-white print:p-8 print:w-full print:absolute print:left-0 print:top-0 print:z-50 print:h-full">
+        <div className="hidden print:block text-center border-b border-slate-200 pb-4 mb-4">
+          <h1 className="text-2xl font-bold font-serif uppercase tracking-widest text-slate-900">
+             {activeBranchId === 'main' ? 'Main Branch' : (branches.find(b => b.id === activeBranchId)?.name || 'Branch')}
+          </h1>
+          <h2 className="text-lg font-bold text-slate-700 mt-1 uppercase tracking-widest">Payroll Register</h2>
+          <p className="text-xs text-slate-400 mt-2">Printed on {new Date().toLocaleString()}</p>
+        </div>
+
+        <div className="card overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50 font-semibold text-slate-800 print:hidden">
+            Payslip History
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                  <th className="px-6 py-3">Date</th>
+                  <th className="px-6 py-3">Employee</th>
+                  <th className="px-6 py-3">Month</th>
+                  <th className="px-6 py-3 text-center">Days</th>
+                  <th className="px-6 py-3 text-right">Base Salary</th>
+                  <th className="px-6 py-3 text-right text-rose-600">Deductions</th>
+                  <th className="px-6 py-3 text-right text-emerald-600 font-bold">Net Paid</th>
+                  <th className="px-6 py-3 text-right print:hidden"></th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-slate-200">
+                {payslips.length === 0 ? (
+                  <tr><td colSpan={8} className="px-6 py-8 text-center text-sm text-slate-500">No payroll records found.</td></tr>
+                ) : (
+                  payslips.map(slip => (
+                    <tr key={slip.id} className="hover:bg-slate-50 text-sm">
+                      <td className="px-6 py-4 whitespace-nowrap text-slate-500">{new Date(slip.date).toLocaleDateString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">{slip.employeeName}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-slate-500 font-mono">{slip.month}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-center font-mono">{slip.days || '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-slate-700">{slip.baseSalary.toLocaleString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-rose-600">{slip.advances.toLocaleString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-emerald-600 font-bold">PKR {slip.netPayable.toLocaleString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right print:hidden">
+                        {user?.role === 'super_admin' && enableDeletion && (
+                          <button onClick={() => handleDelete(slip.id)} className="text-red-500 hover:text-red-700 ml-2">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

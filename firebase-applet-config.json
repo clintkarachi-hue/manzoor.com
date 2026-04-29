@@ -1,0 +1,251 @@
+import React, { useEffect, useState } from 'react';
+import { useAuth, UserRole, AppUser } from '../context/AuthContext';
+import { useBranch } from '../context/BranchContext';
+import { useSettings } from '../context/SettingsContext';
+import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, updatePassword } from 'firebase/auth';
+import { db, secondaryAuth } from '../lib/firebase';
+import { Users as UsersIcon, Plus, UserCog, Trash2, KeyRound } from 'lucide-react';
+
+export function Users() {
+  const { user } = useAuth();
+  const { activeBranchId, branches } = useBranch();
+  const { enableDeletion } = useSettings();
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  
+  // Adding New User State
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<UserRole>('billing_only');
+  const [branchIdForNewUser, setBranchIdForNewUser] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (!user) return;
+    
+    // Super admin sees all users in their tenant, or branch admin sees users in their branch
+    let q: any = collection(db, 'users');
+    if (user.role !== 'super_admin') {
+      q = query(q, where('branchId', '==', user.branchId || activeBranchId));
+    }
+    
+    const unsub = onSnapshot(q, snap => {
+      setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as AppUser)));
+    });
+    
+    return unsub;
+  }, [user, activeBranchId]);
+
+  useEffect(() => {
+    // Defaults for new user
+    if (user?.role === 'branch_admin') {
+      setBranchIdForNewUser(user.branchId || activeBranchId || '');
+    } else {
+      setBranchIdForNewUser('main');
+    }
+  }, [user, activeBranchId]);
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!branchIdForNewUser && role !== 'super_admin') {
+      setErrorMsg("Please select a branch.");
+      return;
+    }
+    
+    setErrorMsg('');
+    setIsSubmitting(true);
+    
+    try {
+      // Create user in firebase auth using secondary app so we don't log out
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      const newUid = userCredential.user.uid;
+      
+      // Save profile in Firestore
+      await setDoc(doc(db, 'users', newUid), {
+        email,
+        name,
+        role,
+        branchId: role === 'super_admin' ? null : branchIdForNewUser,
+        tenantId: user?.tenantId || user?.uid
+      });
+      
+      // Reset form
+      setShowAdd(false);
+      setName('');
+      setEmail('');
+      setPassword('');
+      setRole('billing_only');
+      
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to create user.");
+    } finally {
+      setIsSubmitting(false);
+      // Ensure we immediately sign out the secondary auth so it's clean for next time
+      secondaryAuth.signOut().catch(() => {});
+    }
+  };
+
+  const handleDelete = async (targetUserId: string, targetRole: string) => {
+    if (targetRole === 'super_admin' && user?.role !== 'super_admin') {
+      alert("Only a Super Admin can delete another Super Admin.");
+      return;
+    }
+    if (targetUserId === user?.uid) {
+      alert("You cannot delete your own account.");
+      return;
+    }
+    
+    if (confirm("Are you sure you want to remove this user from the system?\nWarning: This only removes their profile. To completely revoke access, their login password should also be disabled in Firebase Console.")) {
+      try {
+        await deleteDoc(doc(db, 'users', targetUserId));
+      } catch (e: any) {
+        alert("Failed to delete user profile: " + e.message);
+      }
+    }
+  };
+
+  const getRoleLabel = (r: string) => {
+    switch (r) {
+      case 'super_admin': return 'Super Admin';
+      case 'branch_admin': return 'Branch Admin';
+      case 'staff': return 'Staff (Full Branch Access)';
+      case 'billing_only': return 'Billing Only (Limited)';
+      default: return r;
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <h2 className="text-xl font-semibold text-slate-800 flex items-center">
+          <UserCog className="w-6 h-6 mr-3 text-sky-600" />
+          System Logins & Access
+        </h2>
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="flex items-center px-4 py-2 bg-[#1e293b] text-sky-400 font-medium rounded-md hover:bg-slate-800 transition shadow-sm"
+        >
+          <Plus className="w-5 h-5 mr-2" />
+          Create New Login
+        </button>
+      </div>
+
+      {showAdd && (
+        <form onSubmit={handleAddUser} className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 space-y-4 max-w-3xl">
+          <h3 className="text-lg font-medium text-slate-800 mb-4 border-b pb-2">Add New User</h3>
+          
+          {errorMsg && (
+            <div className="bg-red-50 text-red-600 p-3 rounded text-sm border-l-4 border-red-500">
+              {errorMsg}
+            </div>
+          )}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Full Name</label>
+              <input type="text" required value={name} onChange={e => setName(e.target.value)} className="mt-1 block w-full rounded border-slate-300 py-2 px-3 bg-slate-50 border focus:border-sky-500 outline-none" />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Email Address</label>
+              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1 block w-full rounded border-slate-300 py-2 px-3 bg-slate-50 border focus:border-sky-500 outline-none" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Password</label>
+              <input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} className="mt-1 block w-full rounded border-slate-300 py-2 px-3 bg-slate-50 border focus:border-sky-500 outline-none" placeholder="Minimum 6 characters" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">System Role / Access Level</label>
+              <select value={role} onChange={e => setRole(e.target.value as UserRole)} className="mt-1 block w-full rounded border-slate-300 py-2 px-3 bg-slate-50 border outline-none">
+                {user?.role === 'super_admin' && <option value="super_admin">Super Admin (All Access)</option>}
+                {user?.role === 'super_admin' && <option value="branch_admin">Branch Admin</option>}
+                <option value="staff">Branch Staff (Full Branch Access)</option>
+                <option value="billing_only">Billing Only (Sales/Customers)</option>
+              </select>
+            </div>
+
+            {role !== 'super_admin' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Assign to Branch</label>
+                <select 
+                  required 
+                  value={branchIdForNewUser} 
+                  onChange={e => setBranchIdForNewUser(e.target.value)} 
+                  disabled={user?.role === 'branch_admin'}
+                  className="mt-1 block w-full rounded border-slate-300 py-2 px-3 bg-slate-50 border outline-none disabled:bg-slate-100"
+                >
+                  <option value="" disabled>Select a branch</option>
+                  <option value="main">Main Branch (HQ)</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-end gap-3 mt-4">
+            <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 border border-slate-300 rounded text-sm font-medium text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-sky-600 text-white rounded text-sm font-medium hover:bg-sky-700 disabled:opacity-50 flex items-center">
+              {isSubmitting ? 'Creating...' : (
+                <>
+                  <KeyRound className="w-4 h-4 mr-2" />
+                  Create Login Account
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Role</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Branch</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-slate-200">
+            {users.map(u => (
+              <tr key={u.uid} className="hover:bg-slate-50">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{u.name} {u.uid === user?.uid && '(You)'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{u.email}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                    u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' : 
+                    u.role === 'branch_admin' ? 'bg-blue-100 text-blue-800' :
+                    u.role === 'billing_only' ? 'bg-orange-100 text-orange-800' :
+                    'bg-slate-100 text-slate-800'
+                  }`}>
+                    {getRoleLabel(u.role)}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                  {u.role === 'super_admin' ? 'All Branches' : (u.branchId === 'main' ? 'Main Branch (HQ)' : branches.find(b => b.id === u.branchId)?.name || 'Unknown')}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  {u.uid !== user?.uid && (user?.role === 'super_admin' || u.role !== 'super_admin') && user?.role === 'super_admin' && enableDeletion && (
+                    <button onClick={() => handleDelete(u.uid, u.role)} className="text-red-500 hover:text-red-700">
+                      <Trash2 className="w-4 h-4 inline" />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

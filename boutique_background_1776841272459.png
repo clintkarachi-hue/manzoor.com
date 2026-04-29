@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "Courier New", Courier, monospace;
+  --font-serif: Georgia, serif;
+}
+
+body, html {
+  @apply bg-slate-100 h-full;
+}
+
+@media print {
+  *, *::before, *::after {
+    box-shadow: none !important;
+  }
+
+  html, body, #root, main {
+    height: auto !important;
+    overflow: visible !important;
+    background: transparent !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  table { page-break-inside:auto }
+  tr    { page-break-inside:avoid; page-break-after:auto }
+  
+  .thermal-receipt {
+    width: 79mm !important;
+    max-width: 79mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 5mm !important;
+    font-size: 11px !important;
+    box-shadow: none !important;
+    color: black !important;
+    position: relative !important;
+    page-break-after: always;
+  }
+}
+
+.card {
+  @apply bg-white border border-slate-200 rounded-lg shadow-sm;
+}
+.stat-value {
+  @apply font-mono text-2xl font-bold text-slate-800;
+}
+.grid-header {
+  @apply font-serif italic text-xs uppercase tracking-widest text-slate-500 p-3 border-b border-slate-200;
+}
+.grid-row {
+  @apply flex items-center p-3 border-b border-slate-50 hover:bg-slate-50 cursor-pointer text-sm;
+}
+
+

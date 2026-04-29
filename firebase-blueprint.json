@@ -1,0 +1,164 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User accounts with their roles and branch assignments.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email address of the user." },
+        "name": { "type": "string", "description": "Display name." },
+        "role": { "type": "string", "enum": ["super_admin", "branch_admin", "staff"], "description": "RBAC role." },
+        "branchId": { "type": "string", "description": "Assigned branch ID. Optional for super_admin." },
+        "createdAt": { "type": "number", "description": "Creation timestamp." }
+      },
+      "required": ["email", "name", "role", "createdAt"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Branch metadata.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Display name of the branch." },
+        "color": { "type": "string", "description": "Color code (e.g. Hex or Tailwind class) for UI." },
+        "adminEmail": { "type": "string", "description": "Email of the designated branch admin." },
+        "createdAt": { "type": "number", "description": "Creation timestamp." }
+      },
+      "required": ["name", "color", "adminEmail", "createdAt"]
+    },
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "An item in the inventory for a specific branch.",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "price": { "type": "number" },
+        "cost": { "type": "number" },
+        "stock": { "type": "number" },
+        "category": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["branchId", "name", "sku", "price", "cost", "stock", "category", "createdAt", "updatedAt"]
+    },
+    "Sale": {
+      "title": "Sale Invoice",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "total": { "type": "number" },
+        "items": { "type": "array", "description": "Serialized items list" },
+        "date": { "type": "number", "description": "Timestamp of sale" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "total", "items", "date", "createdAt"]
+    },
+    "Purchase": {
+      "title": "Purchase Record",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "total": { "type": "number" },
+        "items": { "type": "array", "description": "Serialized items list" },
+        "date": { "type": "number", "description": "Timestamp of purchase" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "total", "items", "date", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer Profile",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "name", "phone", "createdAt"]
+    },
+    "Vendor": {
+      "title": "Vendor Profile",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "name", "phone", "createdAt"]
+    },
+    "Employee": {
+      "title": "Employee Profile",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "name": { "type": "string" },
+        "position": { "type": "string" },
+        "salary": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "name", "position", "salary", "status", "createdAt"]
+    },
+    "LedgerEntry": {
+      "title": "Ledger Entry",
+      "type": "object",
+      "properties": {
+        "branchId": { "type": "string" },
+        "date": { "type": "number" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "type": { "type": "string", "enum": ["IN", "OUT"] },
+        "amount": { "type": "number" },
+        "reference": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["branchId", "date", "description", "category", "type", "amount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User objects mapped to Firebase Auth UID."
+    },
+    "/branches/{branchId}": {
+      "schema": { "$ref": "#/entities/Branch" },
+      "description": "Branch details."
+    },
+    "/inventory/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Inventory catalog across all branches. Distinguished by branchId."
+    },
+    "/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/Sale" },
+      "description": "Sales records."
+    },
+    "/purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/Purchase" },
+      "description": "Purchase records."
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customer profiles."
+    },
+    "/vendors/{vendorId}": {
+      "schema": { "$ref": "#/entities/Vendor" },
+      "description": "Vendor profiles."
+    },
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Employee records for payroll."
+    },
+    "/ledger/{ledgerId}": {
+      "schema": { "$ref": "#/entities/LedgerEntry" },
+      "description": "Ledger/Cashbook transactions."
+    }
+  }
+}
