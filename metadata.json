@@ -1,6 +1,6 @@
 {
-  "name": "Manzoor Collection SaaS",
-  "description": "Multi-branch SaaS for Manzoor Collection bridging sales, inventory, and analytics.",
+  "name": "Hussain Electronics",
+  "description": "Premium Wholesale Dealer of CCTV Cameras & Security Solutions in Faisalabad. Developed by Aamir Engineering Company.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
